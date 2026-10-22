@@ -58,7 +58,7 @@ public class MessageDispatcher
         switch (cmd)
         {
             case ClientCommands.Ready:       HandleReady(session, p); break;
-            case ClientCommands.Ping:        session.SendMessage(ServerCommands.Session, "PNC"); break; // echo keep-alive
+            case ClientCommands.Ping:        HandlePing(session, p); break; // keep-alive (см. ConnectionManager.as)
             case ClientCommands.Movement:    HandleMovement(session, p); break;
             case ClientCommands.Select:      HandleSelect(session, p); break;
             case ClientCommands.SelectLaser: HandleSelectLaser(session, p); break;
@@ -131,6 +131,19 @@ public class MessageDispatcher
 
         Console.WriteLine($"[login] #{session.Id}: пользователь {userId} ({profile.Username}) зашёл, карта {profile.MapId}");
         session.SendMessage(ServerCommands.LogMessage, $"Добро пожаловать на сервер, {profile.Username}!");
+    }
+
+    // ---------------- PNG (keep-alive) ----------------
+    // По декомпилированному ConnectionManager.as клиент НЕ ожидает ответа на PNG
+    // (в onData нет case ServerCommands.PING); сервер просто подтверждает активность.
+    // Ответ "S|PNC" не является известной клиенту командой и может сломать парсер клиента,
+    // поэтому по умолчанию он НЕ отправляется. Флаг sendPong включает эхо для отладки.
+    public static bool SendPong = false;
+
+    private void HandlePing(Session session, string[] p)
+    {
+        if (SendPong)
+            session.SendMessage(ServerCommands.Session, "PNC");
     }
 
     // ---------------- RDY|MAP → выдача мира ----------------

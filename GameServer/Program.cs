@@ -41,7 +41,7 @@ _ = Task.Run(async () =>
     }
 });
 
-Console.WriteLine("Команды консоли: help | save | kick <userID> | packets [on|off] | quit");
+Console.WriteLine("Команды консоли: help | save | kick <userID> | packets [on|off] | pong [on|off] | quit");
 while (true)
 {
     string? input;
@@ -103,10 +103,22 @@ while (true)
                 : "Показ пакетов ВЫКЛЮЧЕН.");
             break;
 
+        case "pong":
+            // эхо на PNG клиента ("S|PNC") — по умолчанию выключено (клиент его не ожидает)
+            bool pongState = parts.Length >= 2
+                ? parts[1].ToLowerInvariant() is "on" or "1" or "true" or "вкл"
+                : !MessageDispatcher.SendPong;
+            MessageDispatcher.SendPong = pongState;
+            Console.WriteLine(pongState
+                ? "Эхо PNC на PNG: ВКЛ (для отладки; стандартный клиент на него не реагирует)."
+                : "Эхо PNC на PNG: ВЫКЛ (PNG принимается молча).");
+            break;
+
         case "help":
             Console.WriteLine("save — сохранить профили в baza.txt");
             Console.WriteLine("kick <userID> — кикнуть игрока");
             Console.WriteLine("packets [on|off] — показывать/скрыть входящие и исходящие пакеты");
+            Console.WriteLine("pong [on|off] — включать/выключать эхо S|PNC на PNG клиента");
             Console.WriteLine("quit — остановить сервер");
             break;
 
