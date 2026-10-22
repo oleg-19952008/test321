@@ -89,6 +89,11 @@ public static class ServerCommands
     public const string BoxCollectResponse = "y";
     public const string MapEvent = "n";
 
+    // ==== Боезапас (ConnectionManager.as) ====
+    public const string PrimaryWeaponInfo = "B";   // B|bat1..bat12 — кол-во батарей по слотам (Hero.laserBatteryAmounts)
+    public const string SecondaryWeaponInfo = "3"; // 3|r1..r7|m1..m7 — ракеты R310..WIZ + спец-амуниция (см. case SECONDARY_WEAPON_INFO)
+    public const string RocketCooldownCompleted = "RCD"; // A|RCD — ракета снята с кулдауна (assembleRocketCooldownCompleted)
+
     // Содержимое бонус-боксов (подкоманды y)
     public const string BoxContentOre = "CAR";
     public const string BoxContentJackpot = "JPE";

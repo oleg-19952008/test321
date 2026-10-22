@@ -140,9 +140,13 @@ public class MessageDispatcher
 
     /// <summary>
     /// Инициализационный burst после LOGIN: LM → VERSION → I (герой) → m/SMP (карта+объекты) →
-    /// A|BS (бустеры) → A|SET (24 значения настроек) → HS (handshake готовности) → атрибуты.
+    /// A|BS (бустеры) → A|SET (24 значения настроек) → HS (handshake готовности) → атрибуты →
+    /// A|v (скорость) → B (батареи) → 3 (ракеты/спец-амуниция).
     /// Порядок важен: клиент (ConnectionManager.as / SetAttributeAssembly.as) создаёт героя в case
     /// HERO_INIT, а UI (top menu / settings window) — только в assembleSettingsChunk (A|SET).
+    /// Пакеты B/3 обязательны: без них Hero.laserBatteryAmounts/rocketAmounts пусты — меню атаки
+    /// и кнопки боезапаса не активируются; стандартные серверы шлют их сразу после атрибутов
+    /// (см. карту пакетов SendUserShit()/UpdateShip_(): A|v, B|..., 3|...).
     /// </summary>
     private void SendLoginInit(Session session, PlayerProfile profile)
     {
@@ -159,7 +163,33 @@ public class MessageDispatcher
         // но стандартные приватные серверы шлют его сразу после SET.
         session.SendMessage(ServerCommands.MapReadyHandshake, profile.MapId);
         SendAttributes(session);
-        Console.WriteLine($"[init] #{session.Id}: выдан init-набор (I, m, A|BS, A|SET, HS, атрибуты) — карта {profile.MapId}, shipType={profile.ShipType}");
+        // Скорость героя: A|v|<speed> (SetAttributeAssembly.assembleVelocityUpdate читает param1[3]).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.VelocityUpdate, profile.Velocity);
+        SendWeaponInfo(session, profile);
+        Console.WriteLine($"[init] #{session.Id}: выдан init-набор (I, m, A|BS, A|SET, HS, атрибуты, A|v, B, 3) — карта {profile.MapId}, shipType={profile.ShipType}");
+    }
+
+    /// <summary>
+    /// Боезапас по слотам (по case PRIMARY_WEAPON_INFO / SECONDARY_WEAPON_INFO в ConnectionManager.as):
+    ///   B|bat0..bat11            — 12 батарей ([2]..[13] → laserBatteryAmounts[0..11]); у выбранной
+    ///                              батареи (LaserAmmo) количество = текущий боекомплект, остальные 0.
+    ///   3|r0..r6|m0..m6          — [2]..[8] ракеты R310/PLT2026/PLT2021/PLT3030/PLD8/DCR250/WIZ,
+    ///                              [9]..[15] спец-амуниция MINE/SMARTBOMB/INSTASHIELD/EMP/MINE_EMP/MINE_SAB/MINE_DDM.
+    /// В reference-карте это пакеты №2 (B), №6 (3) из UpdateShip_/SendUserShit().
+    /// </summary>
+    private void SendWeaponInfo(Session session, PlayerProfile profile)
+    {
+        var bats = new object[12];
+        for (int i = 0; i < 12; i++)
+            bats[i] = (i + 1 == profile.LaserAmmo) ? profile.MaxLaserCapacity : 0;
+        session.SendMessage(ServerCommands.PrimaryWeaponInfo, bats);
+
+        // Ракеты: активный слот R310 ([2]) получает RocketAmmo, если выбрана ракета (RocketAmmo>0);
+        // иначе весь ракетный боезапас нулевой (выбрана только батарея). Спец-амуниция обнулена (MVP).
+        int r310 = profile.RocketAmmo > 0 ? profile.RocketAmmo : 0;
+        session.SendMessage(ServerCommands.SecondaryWeaponInfo,
+            r310, 0, 0, 0, 0, 0, 0,                   // [2]..[8]  R310..WIZ
+            0, 0, 0, 0, 0, 0, 0);                    // [9]..[15] MINES/SMB/ISH/EMP/EMPM01/SABM01/DDM01
     }
 
     /// <summary>
@@ -322,6 +352,8 @@ public class MessageDispatcher
             SendMap(session, profile);
             SendFlashSettings(session, profile);
             SendAttributes(session);
+            session.SendMessage(ServerCommands.SetAttribute, ServerCommands.VelocityUpdate, profile.Velocity);
+            SendWeaponInfo(session, profile);
         }
 
         session.MapReady = true;
@@ -460,11 +492,16 @@ public class MessageDispatcher
         profile.X = 2000; profile.Y = 2000;
         SaveProfile(session);
         session.MapReady = false;              // клиент снова пришлёт RDY|MAP после загрузки
-        // Новый герой + карта на новой карте (как при входе), затем HS — подтверждение перехода.
+        // Полный init-набор на новой карте (тот же состав, что при входе: I, m, объекты, HS,
+        // атрибуты, скорость, боезапас B/3) — иначе меню атаки не проинициализировано.
         SendHeroInit(session, profile);
         SendMap(session, profile);
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.InitUpdateBoosters, "");
+        SendFlashSettings(session, profile);
         session.SendMessage(ServerCommands.MapReadyHandshake, mapId);
         SendAttributes(session);
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.VelocityUpdate, profile.Velocity);
+        SendWeaponInfo(session, profile);
         Console.WriteLine($"[map] #{session.Id}: переход на карту {mapId}");
     }
 
