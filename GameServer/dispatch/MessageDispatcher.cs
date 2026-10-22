@@ -22,6 +22,8 @@ public class MessageDispatcher
     private static int _nextShipId = 10000;
     // userID -> активная сессия (для DOUBLE_LOGGED_IN)
     private readonly ConcurrentDictionary<int, Session> _online = new();
+    // известные sessionID -> userID (реестр сессий: неизвестный sessionID принимается как новый, повторный — проходит)
+    private readonly ConcurrentDictionary<string, int> _knownSessions = new();
 
     protected MessageDispatcher()
     {
@@ -86,23 +88,23 @@ public class MessageDispatcher
         string sessionId = p[2];
         string version = p[3];
 
-        // Проверка версии клиента
+        // Проверка версии клиента: несовпадение НЕ блокирует вход (dev-режим), только предупреждение.
         if (version != ClientVersion)
         {
-            session.SendMessage(ServerCommands.Session, ServerCommands.ServerVersion, ClientVersion);
-            SendError(session, ServerCommands.ErrInvalidSession);
-            session.Client.Close();
-            return;
+            Console.WriteLine($"[login] #{session.Id}: версия клиента '{version}' ≠ ожидаемой '{ClientVersion}' — вход разрешён (dev-режим).");
         }
 
-        // Проверка sessionID: здесь — простая схема "sess<userID>", в реальном сервере сверяется с login-сервером.
-        if (sessionId != $"sess{userId}")
+        // Проверка sessionID. В реальном сервере sessionID выдаёт login-сервер и игра сверяет его при LOGIN.
+        // Здесь база локальная (baza.txt): неизвестный sessionID принимаем как новую сессию и регистрируем,
+        // повторный вход с тем же sessionID проходит нормально. Блокируем только пустой sessionID.
+        if (string.IsNullOrEmpty(sessionId))
         {
-            Console.WriteLine($"[login] #{session.Id} user={userId}: неверный sessionID '{sessionId}' → ERR|4");
+            Console.WriteLine($"[login] #{session.Id} user={userId}: пустой sessionID → ERR|4");
             SendError(session, ServerCommands.ErrInvalidSession);
             session.Client.Close();
             return;
         }
+        _knownSessions.TryAdd(sessionId, userId);
 
         // Одна активная сессия на пользователя
         if (_online.TryGetValue(userId, out var old) && old != session)

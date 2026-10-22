@@ -11,9 +11,10 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.WriteLine("=== DarkOrbit Game Server (.NET 8, консоль) ===");
 Console.WriteLine($"Хранилище: {bazaPath}");
 
-// --packets: сразу включить показ входящих/исходящих пакетов
-if (args.Contains("--packets", StringComparer.OrdinalIgnoreCase))
-    PacketLog.Enabled = true;
+// Показ пакетов включён всегда (PacketLog.Enabled = true по умолчанию).
+// --packets off: при желании скрыть вывод пакетов с самого запуска.
+if (args.Contains("--packets-off", StringComparer.OrdinalIgnoreCase))
+    PacketLog.Enabled = false;
 
 var storage = new BazaStorage(bazaPath);
 
@@ -46,7 +47,13 @@ while (true)
     string? input;
     try { input = Console.ReadLine(); }
     catch (IOException) { break; }   // консоль недоступна (nohup/redirect stdin) — работаем в фоновом режиме
-    if (input is null) break;
+    catch (InvalidOperationException) { break; } // stdin закрыт/перенаправлен
+    if (input is null)
+    {
+        // stdin закрыт/перенаправлен — выходим из цикла команд, НО сервер продолжает работать в фоне
+        Console.WriteLine("[console] stdin недоступен — интерактивные команды отключены, сервер работает в фоне.");
+        break;
+    }
     var parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
     if (parts.Length == 0) continue;
 
@@ -107,6 +114,13 @@ while (true)
             Console.WriteLine("Неизвестная команда. help — список команд.");
             break;
     }
+}
+
+// Цикл команд завершился (stdin закрыт/перенаправлен) — держим процесс живым, сервер работает в фоне.
+if (!cts.IsCancellationRequested)
+{
+    try { await Task.Delay(Timeout.Infinite, cts.Token); }
+    catch (OperationCanceledException) { }
 }
 
 /// <summary>Тонкий роутер: разрываем циклическую зависимость TcpGameServer <-> MessageDispatcher.</summary>

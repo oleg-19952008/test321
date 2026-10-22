@@ -1,15 +1,16 @@
 namespace GameServer.Net;
 
 /// <summary>
-/// Глобальный переключатель/логгер отображения входящих и исходящих пакетов в консоли.
-/// Включение: команда "packets" (или "packets on") в консоли сервера, либо запуск с аргументом "--packets".
+/// Глобальный логгер отображения входящих и исходящих пакетов в консоли.
+/// Показ пакетов всегда включён (Enabled = true по умолчанию).
+/// При желании можно отключить/включить командой "packets off|on" в консоли сервера.
 /// </summary>
 public static class PacketLog
 {
     private static readonly object _lock = new();
 
-    /// <summary>true — показывать пакеты в консоли.</summary>
-    public static volatile bool Enabled;
+    /// <summary>true — показывать пакеты в консоли (по умолчанию всегда включено).</summary>
+    public static volatile bool Enabled = true;
 
     /// <summary>Максимальная длина строки пакета при выводе (остальное обрезается «…»).</summary>
     public const int MaxDisplayLength = 300;
