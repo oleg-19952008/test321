@@ -139,20 +139,27 @@ public class MessageDispatcher
     }
 
     /// <summary>
-    /// Инициализационный burst после LOGIN: LM → I (герой) → m/SMP (карта+объекты) → A|SET (24 значения
-    /// настроек) → HS (handshake готовности) → атрибуты. Вызывается также при повторном RDY|MAP как страховка.
+    /// Инициализационный burst после LOGIN: LM → VERSION → I (герой) → m/SMP (карта+объекты) →
+    /// A|BS (бустеры) → A|SET (24 значения настроек) → HS (handshake готовности) → атрибуты.
+    /// Порядок важен: клиент (ConnectionManager.as / SetAttributeAssembly.as) создаёт героя в case
+    /// HERO_INIT, а UI (top menu / settings window) — только в assembleSettingsChunk (A|SET).
     /// </summary>
     private void SendLoginInit(Session session, PlayerProfile profile)
     {
         session.SendMessage(ServerCommands.LogMessage, $"Добро пожаловать на сервер, {profile.Username}!");
+        // Версия игры: часть сборок клиента показывает "некорректную версию" и не переходит к загрузке
+        // мира без VERSION. Формат: sid|A|VERSION|<номер> (SetAttributeAssembly.assembleServerVersion).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ServerVersion, 1337);
         SendHeroInit(session, profile);
         SendMap(session, profile);
+        // A|BS|<boosters через "/"> — пустой список бустеров (assembleInitBoostersUpdate читает param1[3]).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.InitUpdateBoosters, "");
         SendFlashSettings(session, profile);
         // HS (MAP_READY_HANDSHAKE): клиент обновляет окно карт; сам по себе он не обязателен для загрузки,
         // но стандартные приватные серверы шлют его сразу после SET.
         session.SendMessage(ServerCommands.MapReadyHandshake, profile.MapId);
         SendAttributes(session);
-        Console.WriteLine($"[init] #{session.Id}: выдан init-набор (I, m, A|SET, HS, атрибуты) — карта {profile.MapId}");
+        Console.WriteLine($"[init] #{session.Id}: выдан init-набор (I, m, A|BS, A|SET, HS, атрибуты) — карта {profile.MapId}, shipType={profile.ShipType}");
     }
 
     /// <summary>
@@ -163,6 +170,19 @@ public class MessageDispatcher
     private void SendHeroInit(Session session, PlayerProfile profile)
     {
         var map = Maps.Registry.TryGetValue(profile.MapId, out var m) ? m : Maps.Registry[4];
+
+        // Валидация типа корабля: клиент рисует только известные shell-типы (1,5,7,9,10,11,13,14,16,
+        // 18,19,20,23,24,26,27,28,29,30,32,33,34,35,37,38,40,41,42,44,49,50,51,52,55,56,57,58,59,60,
+        // 61,62,63,64,65,66,67,68,69,70,71,74,75,77,79,80,81,82,83,84). getMappedShipType() конвертирует
+        // только маппинг [171→71, 173→73, ...], остальные значения проходят как есть. Неизвестный id →
+        // ShipPattern не найден → createShip возвращает null → HERO_INIT молча прерывается ("return"),
+        // герой НЕ появляется на карте. Поэтому при недопустившемся значении — откат к Ghost(1).
+        if (!IsValidShipType(profile.ShipType))
+        {
+            Console.WriteLine($"[init] #{session.Id}: shipType={profile.ShipType} не является допустимым для клиента — откат к 1 (Ghost). " +
+                              "Исправьте поле shipType в базе или выдайте корабль через A|C|CREATE_SHIP.");
+            profile.ShipType = 1;
+        }
 
         int shipId;
         if (session.Hero is { } existing)
@@ -469,15 +489,30 @@ public class MessageDispatcher
     }
 
     // ---------------- Утилиты ----------------
+    /// <summary>Допустимые для клиента id корпусов кораблей (см. ShipPatterns; совпадает с реальными приватниками).</summary>
+    private static readonly HashSet<int> ValidShipTypes = new()
+    {
+        1, 5, 7, 9, 10, 11, 13, 14, 16, 18, 19, 20, 23, 24, 26, 27, 28, 29, 30, 32, 33, 34, 35,
+        37, 38, 40, 41, 42, 44, 49, 50, 51, 52, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+        67, 68, 69, 70, 71, 74, 75, 77, 79, 80, 81, 82, 83, 84,
+        // shell-варианты, которые getMappedShipType() конвертирует в базовые:
+        171, 173, 175, 176, 177, 178, 179, 181, 183,
+    };
+
+    private static bool IsValidShipType(int t) => ValidShipTypes.Contains(t);
+
     private void SendAttributes(Session session)
     {
         if (session.Profile is not { } pr) return;
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.HitpointsInfo, pr.Hp, pr.MaxHp);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ShieldInfo, pr.Shield, pr.MaxShield);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CreditsUpdate, pr.Credits);
-        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CargoChange, pr.Cargo, pr.MaxCargo);
+        // A|c|maxCargo — assembleCargoChange читает ТОЛЬКО param1[3] (лишние поля игнорируются, но
+        // формат одного значения каноничен).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CargoChange, pr.MaxCargo);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ExperiencePointsUpdate, pr.ExperiencePoints);
-        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.AmmunitionCapacityChange, pr.LaserAmmo, pr.MaxLaserCapacity);
+        // A|a|maxLaser|maxRocket — ammunition capacity (пары [3]/[4] поassembleAmmunitionChange).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.AmmunitionCapacityChange, pr.MaxLaserCapacity, pr.MaxRocketCapacity);
     }
 
     private void SendError(Session session, int code) =>
