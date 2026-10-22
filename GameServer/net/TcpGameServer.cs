@@ -83,6 +83,7 @@ public sealed class TcpGameServer
             {
                 session.LastActivityUtc = DateTime.UtcNow;
                 if (line.Length == 0) continue;
+                PacketLog.Incoming(session, line);
                 try
                 {
                     _dispatcher.Handle(session, line);

@@ -40,6 +40,7 @@ public sealed class Session : IAsyncDisposable
     /// <summary>Ставит сообщение в очередь отправки (формат уже собран MessageBuilder, включая \n).</summary>
     public void Send(string message)
     {
+        PacketLog.Outgoing(this, message);
         _outbound.Enqueue(message);
         _signal.Release();
     }

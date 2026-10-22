@@ -374,9 +374,15 @@ public class MessageDispatcher
 
     private void BroadcastExcept(Session source, string command, params object[] parts)
     {
+        var message = Protocol.MessageBuilder.Build(source.Id, command, parts);
+        var targets = new List<Session>();
         foreach (var s in _allSessions())
             if (s != source && s.MapReady)
-                s.SendMessage(command, parts);
+                targets.Add(s);
+
+        Net.PacketLog.Broadcast(source, targets, message);
+        foreach (var s in targets)
+            s.Send(message);
     }
 
     public void SaveProfile(Session session)

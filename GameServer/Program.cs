@@ -11,6 +11,10 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.WriteLine("=== DarkOrbit Game Server (.NET 8, консоль) ===");
 Console.WriteLine($"Хранилище: {bazaPath}");
 
+// --packets: сразу включить показ входящих/исходящих пакетов
+if (args.Contains("--packets", StringComparer.OrdinalIgnoreCase))
+    PacketLog.Enabled = true;
+
 var storage = new BazaStorage(bazaPath);
 
 // MessageDispatcher нужен серверу при создании, сервер (сессии) нужен диспетчеру — разрываем цикл ленивой лямбдой.
@@ -36,7 +40,7 @@ _ = Task.Run(async () =>
     }
 });
 
-Console.WriteLine("Команды консоли: help | save | kick <userID> | quit");
+Console.WriteLine("Команды консоли: help | save | kick <userID> | packets [on|off] | quit");
 while (true)
 {
     string? input;
@@ -76,9 +80,26 @@ while (true)
             else Console.WriteLine("Использование: kick <userID>");
             break;
 
+        case "packets" or "packetlog" or "pk":
+            // packets — переключить, packets on/off — задать явно
+            bool newState = parts.Length >= 2
+                ? parts[1].ToLowerInvariant() switch
+                {
+                    "on" or "1" or "true" or "вкл" => true,
+                    "off" or "0" or "false" or "выкл" => false,
+                    _ => PacketLog.Enabled
+                }
+                : !PacketLog.Enabled;
+            PacketLog.Enabled = newState;
+            Console.WriteLine(newState
+                ? "Показ пакетов ВКЛЮЧЁН (--> исходящие, <-- входящие)."
+                : "Показ пакетов ВЫКЛЮЧЕН.");
+            break;
+
         case "help":
             Console.WriteLine("save — сохранить профили в baza.txt");
             Console.WriteLine("kick <userID> — кикнуть игрока");
+            Console.WriteLine("packets [on|off] — показывать/скрыть входящие и исходящие пакеты");
             Console.WriteLine("quit — остановить сервер");
             break;
 
