@@ -130,39 +130,70 @@ public class MessageDispatcher
         session.LoggedIn = true;
 
         Console.WriteLine($"[login] #{session.Id}: пользователь {userId} ({profile.Username}) зашёл, карта {profile.MapId}");
+
+        // Полная последовательность инициализации сразу после LOGIN.
+        // Клиент (ConnectionManager.as) не шлёт RDY|MAP до загрузки спейсмэпа, а спейсмэп не грузится
+        // без HERO_INIT ("I") + данных карты ("m") + чанка настроек ("A|SET"). Если ждать RDY|MAP —
+        // клиент зависает на загрузке (символьный экран) и присылает только PNG keep-alive.
+        SendLoginInit(session, profile);
+    }
+
+    /// <summary>
+    /// Инициализационный burst после LOGIN: LM → VERSION → I (герой) → m/SMP (карта+объекты) →
+    /// A|BS (бустеры) → A|SET (24 значения настроек) → HS (handshake готовности) → атрибуты.
+    /// Порядок важен: клиент (ConnectionManager.as / SetAttributeAssembly.as) создаёт героя в case
+    /// HERO_INIT, а UI (top menu / settings window) — только в assembleSettingsChunk (A|SET).
+    /// </summary>
+    private void SendLoginInit(Session session, PlayerProfile profile)
+    {
         session.SendMessage(ServerCommands.LogMessage, $"Добро пожаловать на сервер, {profile.Username}!");
+        // Версия игры: часть сборок клиента показывает "некорректную версию" и не переходит к загрузке
+        // мира без VERSION. Формат: sid|A|VERSION|<номер> (SetAttributeAssembly.assembleServerVersion).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ServerVersion, 1337);
+        SendHeroInit(session, profile);
+        SendMap(session, profile);
+        // A|BS|<boosters через "/"> — пустой список бустеров (assembleInitBoostersUpdate читает param1[3]).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.InitUpdateBoosters, "");
+        SendFlashSettings(session, profile);
+        // HS (MAP_READY_HANDSHAKE): клиент обновляет окно карт; сам по себе он не обязателен для загрузки,
+        // но стандартные приватные серверы шлют его сразу после SET.
+        session.SendMessage(ServerCommands.MapReadyHandshake, profile.MapId);
+        SendAttributes(session);
+        Console.WriteLine($"[init] #{session.Id}: выдан init-набор (I, m, A|BS, A|SET, HS, атрибуты) — карта {profile.MapId}, shipType={profile.ShipType}");
     }
 
-    // ---------------- PNG (keep-alive) ----------------
-    // По декомпилированному ConnectionManager.as клиент НЕ ожидает ответа на PNG
-    // (в onData нет case ServerCommands.PING); сервер просто подтверждает активность.
-    // Ответ "S|PNC" не является известной клиенту командой и может сломать парсер клиента,
-    // поэтому по умолчанию он НЕ отправляется. Флаг sendPong включает эхо для отладки.
-    public static bool SendPong = false;
-
-    private void HandlePing(Session session, string[] p)
+    /// <summary>
+    /// HERO_INIT ("I") — порядок параметров по ConnectionManager.as case HERO_INIT ([2]..[31]).
+    /// ВАЖНО: клиент читает строго индексы [2]..[31], включая [31] (isKilledByAttack). Меньше 32 полей —
+    /// ArrayIndexOutOfBounds внутри switch и герой не создаётся.
+    /// </summary>
+    private void SendHeroInit(Session session, PlayerProfile profile)
     {
-        if (SendPong)
-            session.SendMessage(ServerCommands.Session, "PNC");
-    }
-
-    // ---------------- RDY|MAP → выдача мира ----------------
-    private void HandleReady(Session session, string[] p)
-    {
-        if (!session.LoggedIn || session.Profile is null)
-        {
-            SendError(session, ServerCommands.ErrNotLoggedIn);
-            return;
-        }
-        if (p.Length < 3 || p[2] != "MAP") return; // нас интересует готовность спейсмэпа
-
-        session.MapReady = true;
-        var profile = session.Profile;
         var map = Maps.Registry.TryGetValue(profile.MapId, out var m) ? m : Maps.Registry[4];
 
-        // 1) HERO_INIT ("I") — порядок параметров по ConnectionManager.as case HERO_INIT ([2]..[31])
-        int shipId = Interlocked.Increment(ref _nextShipId);
-        session.Hero = new HeroInfo { ShipId = shipId, SessionId = session.Id, Profile = profile };
+        // Валидация типа корабля: клиент рисует только известные shell-типы (1,5,7,9,10,11,13,14,16,
+        // 18,19,20,23,24,26,27,28,29,30,32,33,34,35,37,38,40,41,42,44,49,50,51,52,55,56,57,58,59,60,
+        // 61,62,63,64,65,66,67,68,69,70,71,74,75,77,79,80,81,82,83,84). getMappedShipType() конвертирует
+        // только маппинг [171→71, 173→73, ...], остальные значения проходят как есть. Неизвестный id →
+        // ShipPattern не найден → createShip возвращает null → HERO_INIT молча прерывается ("return"),
+        // герой НЕ появляется на карте. Поэтому при недопустившемся значении — откат к Ghost(1).
+        if (!IsValidShipType(profile.ShipType))
+        {
+            Console.WriteLine($"[init] #{session.Id}: shipType={profile.ShipType} не является допустимым для клиента — откат к 1 (Ghost). " +
+                              "Исправьте поле shipType в базе или выдайте корабль через A|C|CREATE_SHIP.");
+            profile.ShipType = 1;
+        }
+
+        int shipId;
+        if (session.Hero is { } existing)
+        {
+            shipId = existing.ShipId; // при повторном RDY|MAP не меняем id героя
+        }
+        else
+        {
+            shipId = Interlocked.Increment(ref _nextShipId);
+            session.Hero = new HeroInfo { ShipId = shipId, SessionId = session.Id, Profile = profile };
+        }
 
         session.SendMessage(ServerCommands.HeroInit,
             shipId,                       // [2] shipId
@@ -182,7 +213,7 @@ public class MessageDispatcher
             profile.Rotation,             // [16] rotation
             profile.MaxLaserCapacity,     // [17] maxLaserCapacity
             profile.MaxRocketCapacity,    // [18] maxRocketCapacity
-            0,                            // [19] ??? (lastHitAgo)
+            0,                            // [19] lastHitAgo
             profile.Premium ? 1 : 0,      // [20] premium
             profile.ExperiencePoints,     // [21] EP
             profile.HonorPoints,          // [22] HP (честь)
@@ -192,11 +223,19 @@ public class MessageDispatcher
             profile.JackpotAmount,        // [26] jackpot
             profile.AdminLevel,           // [27] admin level (21 = admin)
             profile.ClanTag,              // [28] clan tag
-            0                             // [29..] прочие
+            0,                            // [29] ??? (clan id / group)
+            0,                            // [30] ??? (обязательный заполнитель — сдвигает [31])
+            0                             // [31] isKilledByAttack (жив — 0)
         );
+    }
 
-        // 2) Карта и объекты
+    /// <summary>Карта "m" + PVP-статус "SMP" + статические объекты.</summary>
+    private void SendMap(Session session, PlayerProfile profile)
+    {
+        var map = Maps.Registry.TryGetValue(profile.MapId, out var m) ? m : Maps.Registry[4];
+
         session.SendMessage(ServerCommands.NewMap, map.Id, map.Name, map.Width, map.Height);
+        session.SendMessage(ServerCommands.MapPvpStatus, 0, profile.FactionId);
         foreach (var o in map.Objects)
         {
             switch (o.Type)
@@ -215,10 +254,78 @@ public class MessageDispatcher
                     break;
             }
         }
+    }
 
-        // 3) Атрибуты стартового состояния
-        SendAttributes(session);
-        Console.WriteLine($"[world] #{session.Id}: выдан мир карты {map.Id}, heroShipId={shipId}");
+    /// <summary>
+    /// Чанк flash-настроек "A|SET|v0..v23" (SetAttributeAssembly → SettingsAssembly.assembleSettingsChunk).
+    /// Клиент вызывает createTopMenu()/createSettingsWindow() только получ этот пакет — без него UI
+    /// не инициализируется и RDY|MAP никогда не отправляется. Индексы (после splice(3)):
+    /// 0 autoBoost, 4 displayPlayerNames, 7 displayResources, 8 displayBonusBoxes,
+    /// 11 playSFX, 12 playMusic, 14 displayHitpointBubbles, 15 selectedLaser, 16 selectedRocket,
+    /// 18 displayChat, 21 displayFreeCargoBoxes, 22 displayNotFreeCargoBoxes, 23 autochangeAmmo.
+    /// </summary>
+    private void SendFlashSettings(Session session, PlayerProfile profile)
+    {
+        bool Get(string key, bool def) =>
+            profile.Settings.TryGetValue(key, out var v) && int.TryParse(v, out int i) ? i != 0 : def;
+
+        int[] s = new int[24];
+        s[0]  = Get("AUTO_BOOST", true) ? 1 : 0;              // autoBoost
+        s[4]  = Get("DISPLAY_PLAYER_NAMES", true) ? 1 : 0;    // displayPlayerNames
+        s[7]  = Get("DISPLAY_ORE", true) ? 1 : 0;             // displayResources
+        s[8]  = Get("DISPLAY_BONUS_BOXES", true) ? 1 : 0;     // displayBonusBoxes
+        s[11] = Get("PLAY_SFX", true) ? 1 : 0;                // playSFX
+        s[12] = Get("PLAY_MUSIC", true) ? 1 : 0;              // playMusic
+        s[14] = Get("DISPLAY_HITPOINT_BUBBLES", true) ? 1 : 0;// displayHitpointBubbles
+        s[15] = profile.LaserAmmo > 0 ? 1 : 0;                // selectedLaser (базовая батарея)
+        s[16] = 0;                                            // selectedRocket
+        s[18] = Get("DISPLAY_CHAT", true) ? 1 : 0;            // displayChat
+        s[21] = Get("DISPLAY_FREE_CARGO_BOXES", true) ? 1 : 0;
+        s[22] = Get("DISPLAY_NOT_FREE_CARGO_BOXES", true) ? 1 : 0;
+        s[23] = Get("AUTO_AMMO_CHANGE", true) ? 1 : 0;
+
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.FlashSettings, s);
+    }
+
+    // ---------------- PNG (keep-alive) ----------------
+    // По декомпилированному ConnectionManager.as клиент НЕ ожидает ответа на PNG:
+    // в giant-switch метода onData нет case ServerCommands.PING ("PNG"), строка
+    // уходит в default и молча игнорируется. Сервер просто отмечает активность.
+    // Эхо "S|PNC" (домен ошибок + неизвестный код) не отправляется никогда —
+    // оно сбивало разбор пакетов у части сборок клиента.
+    // Флаг SendPong оставлен только для совместимости с консольной командой `pong [on|off]`;
+    // эхо по-прежнему не шлётся (отключено навсегда).
+    public static bool SendPong { get; set; }
+
+    private void HandlePing(Session session, string[] p)
+    {
+        // keep-alive: ничего не отвечаем (см. комментарий выше).
+    }
+
+    // ---------------- RDY|MAP → подтверждение готовности клиента ----------------
+    private void HandleReady(Session session, string[] p)
+    {
+        if (!session.LoggedIn || session.Profile is null)
+        {
+            SendError(session, ServerCommands.ErrNotLoggedIn);
+            return;
+        }
+        if (p.Length < 3 || p[2] != "MAP") return; // нас интересует готовность спейсмэпа
+
+        var profile = session.Profile;
+
+        // Страховка: если по какой-то причине клиент прислал RDY|MAP без героя (например, потерянный
+        // init-набор после LOGIN) — выдаём мир заново. В норме Hero уже создан на LOGIN.
+        if (session.Hero is null)
+        {
+            SendHeroInit(session, profile);
+            SendMap(session, profile);
+            SendFlashSettings(session, profile);
+            SendAttributes(session);
+        }
+
+        session.MapReady = true;
+        Console.WriteLine($"[world] #{session.Id}: клиент подтвердил готовность карты {profile.MapId} (RDY|MAP), heroShipId={session.Hero?.ShipId}");
     }
 
     // ---------------- Движение ----------------
@@ -353,7 +460,11 @@ public class MessageDispatcher
         profile.X = 2000; profile.Y = 2000;
         SaveProfile(session);
         session.MapReady = false;              // клиент снова пришлёт RDY|MAP после загрузки
+        // Новый герой + карта на новой карте (как при входе), затем HS — подтверждение перехода.
+        SendHeroInit(session, profile);
+        SendMap(session, profile);
         session.SendMessage(ServerCommands.MapReadyHandshake, mapId);
+        SendAttributes(session);
         Console.WriteLine($"[map] #{session.Id}: переход на карту {mapId}");
     }
 
@@ -378,15 +489,30 @@ public class MessageDispatcher
     }
 
     // ---------------- Утилиты ----------------
+    /// <summary>Допустимые для клиента id корпусов кораблей (см. ShipPatterns; совпадает с реальными приватниками).</summary>
+    private static readonly HashSet<int> ValidShipTypes = new()
+    {
+        1, 5, 7, 9, 10, 11, 13, 14, 16, 18, 19, 20, 23, 24, 26, 27, 28, 29, 30, 32, 33, 34, 35,
+        37, 38, 40, 41, 42, 44, 49, 50, 51, 52, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+        67, 68, 69, 70, 71, 74, 75, 77, 79, 80, 81, 82, 83, 84,
+        // shell-варианты, которые getMappedShipType() конвертирует в базовые:
+        171, 173, 175, 176, 177, 178, 179, 181, 183,
+    };
+
+    private static bool IsValidShipType(int t) => ValidShipTypes.Contains(t);
+
     private void SendAttributes(Session session)
     {
         if (session.Profile is not { } pr) return;
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.HitpointsInfo, pr.Hp, pr.MaxHp);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ShieldInfo, pr.Shield, pr.MaxShield);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CreditsUpdate, pr.Credits);
-        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CargoChange, pr.Cargo, pr.MaxCargo);
+        // A|c|maxCargo — assembleCargoChange читает ТОЛЬКО param1[3] (лишние поля игнорируются, но
+        // формат одного значения каноничен).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.CargoChange, pr.MaxCargo);
         session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ExperiencePointsUpdate, pr.ExperiencePoints);
-        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.AmmunitionCapacityChange, pr.LaserAmmo, pr.MaxLaserCapacity);
+        // A|a|maxLaser|maxRocket — ammunition capacity (пары [3]/[4] поassembleAmmunitionChange).
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.AmmunitionCapacityChange, pr.MaxLaserCapacity, pr.MaxRocketCapacity);
     }
 
     private void SendError(Session session, int code) =>
