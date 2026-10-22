@@ -21,6 +21,7 @@ public sealed class Session : IAsyncDisposable
     public bool LoggedIn;
     public bool MapReady;          // получен RDY|MAP — можно слать состояние мира
     public string? SessionId;      // sessionID из LOGIN (для проверки)
+    public string ClientVersion = "4.1"; // версия из пакета LOGIN — её же сервер эхо-ит в A|VERSION
     public PlayerProfile? Profile;
     public HeroInfo? Hero;         // когда герой на карте
     public NpcInfo? Npc;           // учебный NPC на карте сессии

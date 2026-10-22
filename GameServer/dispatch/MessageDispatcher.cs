@@ -92,6 +92,7 @@ public class MessageDispatcher
         }
         string sessionId = p[2];
         string version = p[3];
+        session.ClientVersion = version; // A|VERSION эхо-ит версию, присланную клиентом (не захардкоженную 1337)
 
         // Проверка версии клиента: несовпадение НЕ блокирует вход (dev-режим), только предупреждение.
         if (version != ClientVersion)
@@ -153,7 +154,10 @@ public class MessageDispatcher
         session.SendMessage(ServerCommands.LogMessage, $"Добро пожаловать на сервер, {profile.Username}!");
         // Версия игры: часть сборок клиента показывает "некорректную версию" и не переходит к загрузке
         // мира без VERSION. Формат: sid|A|VERSION|<номер> (SetAttributeAssembly.assembleServerVersion).
-        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ServerVersion, 1337);
+        // Значение = версия, присланная клиентом в LOGIN (эхо), а не захардкоженный номер сборки:
+        // сверка идёт по строке версии клиента, поэтому несоответствие (например, 1337 vs "4.1")
+        // блокирует переход из LOADING в космос.
+        session.SendMessage(ServerCommands.SetAttribute, ServerCommands.ServerVersion, session.ClientVersion);
         SendHeroInit(session, profile);
         SendMap(session, profile);
         // A|BS|<boosters через "/"> — пустой список бустеров (assembleInitBoostersUpdate читает param1[3]).
