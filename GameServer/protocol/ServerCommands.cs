@@ -55,6 +55,7 @@ public static class ServerCommands
 
     // ==== Атрибуты (SET_ATTRIBUTE, домен "A") ====
     public const string SetAttribute = "A";
+    public const string FlashSettings = "SET";         // A|SET|v0..v23 — чанк настроек клиента (24 значения, см. SettingsAssembly.assembleSettingsChunk)
     public const string ShieldInfo = "SHD";            // cur,max
     public const string HitpointsInfo = "HPT";         // cur,max
     public const string ExperiencePointsUpdate = "EP";   // A|EP|exp
