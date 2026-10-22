@@ -13,7 +13,10 @@ namespace GameServer.Dispatch;
 /// </summary>
 public class MessageDispatcher
 {
-    private const string ClientVersion = "1.337"; // версия клиента, сверяется при LOGIN
+    private const string ClientVersion = "4.1"; // ожидаемая версия клиента (сверяется нестрого)
+    // Формат версии клиента: MAJOR.MINOR[.PATCH] — например 4.1, 1.337, 12.0.5
+    private static readonly System.Text.RegularExpressions.Regex VersionPattern =
+        new(@"^\d+(\.\d+){1,3}$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private readonly BazaStorage _storage;
     private readonly Func<IEnumerable<Session>> _allSessions;
@@ -77,10 +80,12 @@ public class MessageDispatcher
     private void HandleLogin(Session session, string[] p)
     {
         // p = [LOGIN, userID, sessionID, version, factionID?]
+        // Версия — строка вида "4.1"/"1.337", поэтому проверяем формат, а не int.
         if (p.Length < 4 ||
             !int.TryParse(p[1], out int userId) ||
-            !int.TryParse(p[3], out _))
+            !VersionPattern.IsMatch(p[3]))
         {
+            Console.WriteLine($"[login] #{session.Id}: некорректный пакет LOGIN ({string.Join("|", p)}) → ERR|4");
             SendError(session, ServerCommands.ErrInvalidSession);
             session.Client.Close();
             return;
