@@ -10,6 +10,14 @@ public sealed class HeroInfo
     public bool Alive = true;
 }
 
+/// <summary>Учебный NPC-цель в сессии (создаётся при выдаче мира).</summary>
+public sealed class NpcInfo
+{
+    public int ShipId;
+    public int X, Y;
+    public int Hp, MaxHp;
+}
+
 /// <summary>Объект карты: руда, бонус-бокс, станция, портал, мина.</summary>
 public enum MapObjectType { Ore, Box, Station, Portal, Mine }
 

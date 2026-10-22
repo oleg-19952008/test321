@@ -26,7 +26,7 @@ public static class ServerCommands
     public const string CreateShip = "C";
     public const string ShipSelected = "N";
     public const string RemoveShip = "R";
-    public const string DestroyShip = "K";
+    public const string DestroyShip = "K";             // K|shipId|explosionType
     public const string ShipMovement = "1";            // id,x,y,dir
     public const string HeroMovement = "T";            // x,y,rotation
     public const string Beacon = "D";
@@ -43,7 +43,7 @@ public static class ServerCommands
     public const string PrepareAttackB = "PBA";
     public const string AttackStoppedA = "F";
     public const string AttackStoppedT = "J";
-    public const string ShootMissedA = "M";
+    public const string ShootMissedA = "M";            // M|attackerId|targetId
     public const string ShootMissedZ = "Z";
     public const string AttackInfoH = "H";
     public const string AttackInfoY = "Y";
@@ -57,12 +57,12 @@ public static class ServerCommands
     public const string SetAttribute = "A";
     public const string ShieldInfo = "SHD";            // cur,max
     public const string HitpointsInfo = "HPT";         // cur,max
-    public const string ExperiencePointsUpdate = "EP";
+    public const string ExperiencePointsUpdate = "EP";   // A|EP|exp
     public const string CreditsUpdate = "C";
     public const string LevelUpdate = "LUP";
     public const string VelocityUpdate = "v";
-    public const string CargoChange = "c";
-    public const string AmmunitionCapacityChange = "a";
+    public const string CargoChange = "c";             // A|c|maxCargo
+    public const string AmmunitionCapacityChange = "a";  // A|a|maxLaser|maxRocket
     public const string UpdateConfigurationCount = "CC";
     public const string InitUpdateBoosters = "BS";
     public const string SetCooldown = "CLD";           // id,type,seconds
@@ -79,7 +79,7 @@ public static class ServerCommands
     public const string CreateOre = "r";
     public const string CreateBox = "c";
     public const string CreateMine = "L";
-    public const string RemoveOre = "q";
+    public const string RemoveOre = "q";              // q|objId|shipId
     public const string RemoveBox = "2";
     public const string OreCollectedByHero = "e";
     public const string CargoFull = "f";

@@ -23,6 +23,7 @@ public sealed class Session : IAsyncDisposable
     public string? SessionId;      // sessionID из LOGIN (для проверки)
     public PlayerProfile? Profile;
     public HeroInfo? Hero;         // когда герой на карте
+    public NpcInfo? Npc;           // учебный NPC на карте сессии
 
     public DateTime LastActivityUtc = DateTime.UtcNow;
 
