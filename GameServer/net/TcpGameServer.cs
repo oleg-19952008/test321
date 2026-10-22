@@ -72,7 +72,47 @@ public sealed class TcpGameServer
 
     private async Task HandleAsync(Session session, CancellationToken ct)
     {
-        using var reader = new StreamReader(session.Stream, Encoding.UTF8, false, 4096, leaveOpen: true);
+        // flashpolicy: если клиент прислал <policy-file-request/>, отвечаем XML-политикой и закрываем соединение.
+        // Иначе переходим в обычный line-based режим.
+        var peekBuf = new byte[512];
+        int peekLen = 0;
+        try
+        {
+            if (session.Stream.CanRead)
+            {
+                // ждём первые данные не дольше 3 секунд
+                var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+                try
+                {
+                    peekLen = await session.Stream.ReadAsync(peekBuf.AsMemory(0, peekBuf.Length), timeoutCts.Token);
+                }
+                catch (OperationCanceledException) { /* нет данных — просто закрываем */ }
+                finally { timeoutCts.Dispose(); }
+            }
+        }
+        catch (IOException) { /* разорвано */ }
+
+        if (peekLen <= 0)
+        {
+            Console.WriteLine($"[net] - соединение #{session.Id} (нет данных)");
+            await session.DisposeAsync();
+            return;
+        }
+
+        var firstChunk = Encoding.UTF8.GetString(peekBuf, 0, peekLen);
+        if (firstChunk.Contains("<policy-file-request"))
+        {
+            const string policyXml = "<cross-domain-policy><allow-access-from domain=\"*\" to-ports=\"8080\" /></cross-domain-policy>\0";
+            var bytes = Encoding.UTF8.GetBytes(policyXml);
+            try { await session.Stream.WriteAsync(bytes, ct); } catch { }
+            Console.WriteLine($"[net] - соединение #{session.Id} (flashpolicy отправлен)");
+            await session.DisposeAsync();
+            return;
+        }
+
+        // обычный протокол: читаем строки до \n
+        using var reader = new BufferedReaderWithPrefix(session.Stream, firstChunk, peekBuf, peekLen);
         var writerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var writerTask = session.WriterLoopAsync(writerCts.Token);
 
@@ -106,6 +146,77 @@ public sealed class TcpGameServer
             await session.DisposeAsync();
         }
     }
+}
+
+/// <summary>
+/// Читатель строк поверх NetworkStream, который сначала «доедает» уже прочитанный при peek кусок
+/// (важно: байтыpeek'а уже изъяты из потока и теряются при обычном StreamReader), затем читает из потока.
+/// Фрейминг: строки до '\n' (поддерживается и '\r\n').
+/// </summary>
+internal sealed class BufferedReaderWithPrefix : IDisposable
+{
+    private readonly NetworkStream _stream;
+    private readonly byte[] _prefix;   // сырые байты первого peek-чтения
+    private int _pos;
+    private readonly byte[] _single = new byte[1];
+    private readonly List<byte> _line = new();
+
+    public BufferedReaderWithPrefix(NetworkStream stream, string firstChunkText, byte[] peekBuf, int peekLen)
+    {
+        _stream = stream;
+        // перекодируем корректно: берём исходные байты, а не текст (чтобы не резать мультибайт/не терять хвост строки)
+        _prefix = new byte[peekLen];
+        Array.Copy(peekBuf, _prefix, peekLen);
+    }
+
+    public async Task<string?> ReadLineAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            // сначала разбираем prefix-байты
+            while (_pos < _prefix.Length)
+            {
+                byte b = _prefix[_pos++];
+                if (b == (byte)'\n')
+                {
+                    var s = System.Text.Encoding.UTF8.GetString(_line.ToArray());
+                    _line.Clear();
+                    return s.TrimEnd('\r');
+                }
+                _line.Add(b);
+            }
+
+            // затем читаем из потока по одному байту (медленно, но надёжно для small packets)
+            int one = 0;
+            try
+            {
+                one = await _stream.ReadAsync(_single.AsMemory(0, 1), ct);
+            }
+            catch (IOException) { one = 0; }
+            if (one <= 0)
+            {
+                // поток закрыт; если в буфере есть незавершённая строка — отдадим её
+                if (_line.Count > 0)
+                {
+                    var s = System.Text.Encoding.UTF8.GetString(_line.ToArray());
+                    _line.Clear();
+                    return s.TrimEnd('\r');
+                }
+                return null;
+            }
+
+            byte nb = _single[0];
+            if (nb == (byte)'\n')
+            {
+                var s = System.Text.Encoding.UTF8.GetString(_line.ToArray());
+                _line.Clear();
+                return s.TrimEnd('\r');
+            }
+            _line.Add(nb);
+        }
+    }
+
+    public void Dispose() { }
 }
 
 /// <summary>Простейшая потокобезопасная обёртка над Dictionary (.NET 8 не имеет ConcurrentDictionary-safe API под наши нужды именования).</summary>
