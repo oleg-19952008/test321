@@ -74,6 +74,7 @@ public static class ServerCommands
 
     // ==== Карта и объекты ====
     public const string NewMap = "m";
+    public const string MapPvpStatus = "SMP";          // SET_MAP_PVP_STATUS: pvpAllowed,homeFaction
     public const string CreateStation = "s";
     public const string CreatePortal = "p";
     public const string CreateOre = "r";

@@ -134,16 +134,14 @@ public class MessageDispatcher
     }
 
     // ---------------- PNG (keep-alive) ----------------
-    // По декомпилированному ConnectionManager.as клиент НЕ ожидает ответа на PNG
-    // (в onData нет case ServerCommands.PING); сервер просто подтверждает активность.
-    // Ответ "S|PNC" не является известной клиенту командой и может сломать парсер клиента,
-    // поэтому по умолчанию он НЕ отправляется. Флаг sendPong включает эхо для отладки.
-    public static bool SendPong = false;
-
+    // По декомпилированному ConnectionManager.as клиент НЕ ожидает ответа на PNG:
+    // в giant-switch метода onData нет case ServerCommands.PING ("PNG"), строка
+    // уходит в default и молча игнорируется. Сервер просто отмечает активность.
+    // Эхо "S|PNC" (домен ошибок + неизвестный код) не отправляется никогда —
+    // оно сбивало разбор пакетов у части сборок клиента.
     private void HandlePing(Session session, string[] p)
     {
-        if (SendPong)
-            session.SendMessage(ServerCommands.Session, "PNC");
+        // keep-alive: ничего не отвечаем (см. комментарий выше).
     }
 
     // ---------------- RDY|MAP → выдача мира ----------------
